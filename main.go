@@ -6,6 +6,7 @@ import (
 	"log"
 	"math"
 	"os"
+	"path/filepath"
 	"sort"
 	"time"
 
@@ -15,11 +16,11 @@ import (
 )
 
 type Ride struct {
-	Name string
-	Duration int64
-	Distance float64
+	Name        string
+	Duration    int64
+	Distance    float64
 	Description string
-	Date time.Time
+	Date        time.Time
 }
 
 type Rides []Ride
@@ -36,9 +37,14 @@ func (e Rides) Swap(i, j int) {
 	e[i], e[j] = e[j], e[i]
 }
 
-
 func main() {
-	client := getFullClient("/home/greg/.config/gem/fitness/client_secret.json")
+
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		log.Fatalf("unable to find config dir: %v\n", err)
+	}
+	path := filepath.Join(configDir, "gem/fitness/client_secret.json")
+	client := getFullClient(path)
 	fitnessService, err := fitness.NewService(context.TODO(), option.WithHTTPClient(client))
 	if err != nil {
 		log.Fatalf("%v", err.Error())
@@ -68,22 +74,22 @@ func main() {
 
 	var aggregates []*fitness.AggregateBy
 	aggregates = append(aggregates, &fitness.AggregateBy{
-		DataTypeName:    "com.google.activity.segment",
+		DataTypeName: "com.google.activity.segment",
 	})
 	aggregates = append(aggregates, &fitness.AggregateBy{
-		DataTypeName:    "com.google.distance.delta",
+		DataTypeName: "com.google.distance.delta",
 	})
 
 	var rides Rides
 
 	for _, session := range resp.Session {
 		var c = datasetService.Aggregate("me", &fitness.AggregateRequest{
-			AggregateBy:             aggregates,
+			AggregateBy: aggregates,
 			BucketBySession: &fitness.BucketBySession{
 				MinDurationMillis: 100,
 			},
-			EndTimeMillis:               session.EndTimeMillis,
-			StartTimeMillis:             session.StartTimeMillis,
+			EndTimeMillis:   session.EndTimeMillis,
+			StartTimeMillis: session.StartTimeMillis,
 		})
 		r, err := c.Do()
 		if err != nil {
@@ -91,14 +97,14 @@ func main() {
 		}
 
 		for _, bucket := range r.Bucket {
-			timestamp := time.Unix(bucket.StartTimeMillis / 1000, 0)
+			timestamp := time.Unix(bucket.StartTimeMillis/1000, 0)
 
 			ride := Ride{
 				Name:        session.Name,
 				Duration:    (bucket.EndTimeMillis - bucket.StartTimeMillis) / 1000 / 60,
 				Distance:    0,
 				Description: bucket.Session.Description,
-				Date: timestamp,
+				Date:        timestamp,
 			}
 			for _, dataset := range bucket.Dataset {
 				if dataset.DataSourceId == "derived:com.google.distance.delta:com.google.android.gms:aggregated" {
@@ -128,7 +134,7 @@ func main() {
 
 	var ys []float64
 	var xs []float64
-	totalDist := 0.0;
+	totalDist := 0.0
 	for _, activity := range rides {
 		if activity.Distance != 0 {
 			totalDist = totalDist + activity.Distance
@@ -180,8 +186,6 @@ func main() {
 			},
 		},
 	}
-
-
 
 	err = graph.Render(chart.SVG, os.Stdout)
 	if err != nil {
