@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"math"
 	"os"
@@ -15,30 +14,42 @@ import (
 	"google.golang.org/api/option"
 )
 
-type Ride struct {
-	Name        string
-	Duration    int64
-	Distance    float64
-	Description string
-	Date        time.Time
+type Activity struct {
+	Name         string
+	Duration     int64
+	Distance     float64
+	Description  string
+	Date         time.Time
+	ActivityType int64
 }
 
-type Rides []Ride
+type Activities []Activity
 
-func (e Rides) Len() int {
+func (e Activities) Len() int {
 	return len(e)
 }
 
-func (e Rides) Less(i, j int) bool {
+func (e Activities) Less(i, j int) bool {
 	return e[i].Date.Before(e[j].Date)
 }
 
-func (e Rides) Swap(i, j int) {
+func (e Activities) Swap(i, j int) {
 	e[i], e[j] = e[j], e[i]
 }
 
-func main() {
+func removeDuplicates(activities Activities) Activities {
+	var dedupe Activities
+	seen := map[string]bool{}
+	for _, activity := range activities {
+		if seen[activity.Date.String()] == false {
+			dedupe = append(dedupe, activity)
+			seen[activity.Date.String()] = true
+		}
+	}
+	return dedupe
+}
 
+func main() {
 	configDir, err := os.UserConfigDir()
 	if err != nil {
 		log.Fatalf("unable to find config dir: %v\n", err)
@@ -47,7 +58,7 @@ func main() {
 	client := getFullClient(path)
 	fitnessService, err := fitness.NewService(context.TODO(), option.WithHTTPClient(client))
 	if err != nil {
-		log.Fatalf("%v", err.Error())
+		log.Fatalf("%v\n", err.Error())
 	}
 
 	datasetService := fitness.NewUsersDatasetService(fitnessService)
@@ -55,6 +66,7 @@ func main() {
 
 	call := sessionService.List("me")
 	call.StartTime("2020-01-01T00:00:00.000Z")
+	call.EndTime("2020-12-31T23:59:59.000Z")
 	// https://developers.google.com/fit/rest/v1/reference/activity-types
 	//  1 = Biking
 	// 15 = Mountain Biking
@@ -63,10 +75,7 @@ func main() {
 	// 18 = Stationary Biking
 	// 19 = Utility Biking even though I don't think I've ever done this
 	//  8 = Running
-	//  7 = Walking
-	// 35 = Hiking
-	// 93 = Walking (Fitness) whatever that is
-	call.ActivityType(1, 15, 16, 17, 18, 19, 8, 7, 35, 93)
+	call.ActivityType(1, 15, 16, 17, 18, 19, 8)
 	resp, err := call.Do()
 	if err != nil {
 		log.Fatalf("%v", err.Error())
@@ -80,7 +89,7 @@ func main() {
 		DataTypeName: "com.google.distance.delta",
 	})
 
-	var rides Rides
+	var activities Activities
 
 	for _, session := range resp.Session {
 		var c = datasetService.Aggregate("me", &fitness.AggregateRequest{
@@ -93,18 +102,19 @@ func main() {
 		})
 		r, err := c.Do()
 		if err != nil {
-			fmt.Errorf("error getting dataset: %v", err)
+			log.Fatalf("error getting dataset: %v\n", err)
 		}
 
 		for _, bucket := range r.Bucket {
 			timestamp := time.Unix(bucket.StartTimeMillis/1000, 0)
 
-			ride := Ride{
-				Name:        session.Name,
-				Duration:    (bucket.EndTimeMillis - bucket.StartTimeMillis) / 1000 / 60,
-				Distance:    0,
-				Description: bucket.Session.Description,
-				Date:        timestamp,
+			activity := Activity{
+				Name:         session.Name,
+				Duration:     (bucket.EndTimeMillis - bucket.StartTimeMillis) / 1000 / 60,
+				Distance:     0,
+				Description:  bucket.Session.Description,
+				Date:         timestamp,
+				ActivityType: session.ActivityType,
 			}
 			for _, dataset := range bucket.Dataset {
 				if dataset.DataSourceId == "derived:com.google.distance.delta:com.google.android.gms:aggregated" {
@@ -121,21 +131,23 @@ func main() {
 							} else {
 								round = math.Floor(digit)
 							}
-							ride.Distance = round / pow
+							activity.Distance = round / pow
 						}
 					}
 				}
 			}
-			rides = append(rides, ride)
+			activities = append(activities, activity)
 		}
 	}
 
-	sort.Sort(rides)
+	activities = removeDuplicates(activities)
+	sort.Sort(activities)
 
 	var ys []float64
 	var xs []float64
 	totalDist := 0.0
-	for _, activity := range rides {
+
+	for _, activity := range activities {
 		if activity.Distance != 0 {
 			totalDist = totalDist + activity.Distance
 			ys = append(ys, totalDist)
